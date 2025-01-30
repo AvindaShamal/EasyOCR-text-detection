@@ -10,3 +10,5 @@ PyYAML
 Shapely
 pyclipper
 ninja
+wandb==0.12.9
+numpy==1.25.0
