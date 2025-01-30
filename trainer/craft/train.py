@@ -3,11 +3,9 @@ import argparse
 import os
 import shutil
 import time
-import multiprocessing as mp
 import yaml
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.optim as optim
 import wandb
 from tqdm import tqdm
@@ -23,15 +21,16 @@ from utils.util import copyStateDict
 
 class Trainer(object):
     def __init__(self, config, gpu, mode):
-        self.device = (
-            torch.device("cuda", gpu)
-            if torch.cuda.is_available()
-            else torch.device("cpu")
-        )
+        if torch.cuda.is_available():
+            self.device = torch.device(f"cuda:{gpu}")
+            self.gpu = gpu
+        else:
+            self.device = torch.device("cpu")
+            self.gpu = None
+
         self.config = config
-        self.gpu = gpu if torch.cuda.is_available() else None
         self.mode = mode
-        self.net_param = self.get_load_param(gpu)
+        self.net_param = self.get_load_param(self.device)
 
     def get_synth_loader(self):
         dataset = SynthTextDataSet(
@@ -82,13 +81,9 @@ class Trainer(object):
 
         return custom_dataset
 
-    def get_load_param(self, gpu):
+    def get_load_param(self, device):
         if self.config.train.ckpt_path is not None:
-            map_location = (
-                torch.device("cuda", gpu)
-                if torch.cuda.is_available()
-                else torch.device("cpu")
-            )
+            map_location = device
             param = torch.load(self.config.train.ckpt_path, map_location=map_location)
         else:
             param = None
@@ -139,22 +134,34 @@ class Trainer(object):
                     "{} iou F1-score".format(dataset): np.round(metrics["hmean"], 3),
                 }
             )
-    
-    def iou_train(self, pred_scores: torch.Tensor, gt_scores: torch.Tensor, threshold=0.5):
+
+    def iou_train(
+        self, pred_scores: torch.Tensor, gt_scores: torch.Tensor, threshold=0.5
+    ):
         """
         Compute Intersection over Union (IoU) for text detection.
         Args:
             pred_scores: Model-predicted region or affinity scores.
             gt_scores: Ground truth region or affinity scores.
         """
-        intersection = torch.logical_and(pred_scores > threshold, gt_scores > threshold).sum().item()
-        union = torch.logical_or(pred_scores > threshold, gt_scores > threshold).sum().item()
-        
+        intersection = (
+            torch.logical_and(pred_scores > threshold, gt_scores > threshold)
+            .sum()
+            .item()
+        )
+        union = (
+            torch.logical_or(pred_scores > threshold, gt_scores > threshold)
+            .sum()
+            .item()
+        )
+
         if union == 0:
-            return 1.0 if intersection == 0 else 0.0  # Handle edge case where no text is present
-        
+            return (
+                1.0 if intersection == 0 else 0.0
+            )  # Handle edge case where no text is present
+
         return intersection / union
-    
+
     def plot_learning_curves(self, train_loss, train_iou):
         fig, ax1 = plt.subplots()
 
@@ -235,7 +242,6 @@ class Trainer(object):
             shuffle=False,
             num_workers=self.config.train.num_workers,
             drop_last=False,
-            pin_memory=torch.cuda.is_available(),
         )
 
         # OPTIMIZER ---------------------------------------------------------------------------------------------------#
@@ -276,7 +282,7 @@ class Trainer(object):
         iou_scores = []
         train_loss = []
         train_iou = []
-        batch_size=self.config.train.batch_size
+        batch_size = self.config.train.batch_size
 
         print(
             "================================ Train start ================================"
@@ -343,7 +349,7 @@ class Trainer(object):
                     confidence_mask_label = confidence_masks
 
                 if self.config.train.amp and torch.cuda.is_available():
-                    with torch.cuda.autocast(str(self.device)):
+                    with torch.amp.autocast(str(self.device)):
                         output, _ = craft(images)
                         out1 = output[:, :, :, 0]
                         out2 = output[:, :, :, 1]
@@ -386,7 +392,7 @@ class Trainer(object):
                 iou_scores.append((iou_region + iou_affinity) / 2)
                 end_time = time.time()
                 loss_value += loss.item()
-                batch_time += end_time - start_time                
+                batch_time += end_time - start_time
 
                 if train_step > 0 and train_step % batch_size == 0:
                     mean_loss = loss_value / batch_size
@@ -503,10 +509,6 @@ def main():
     # load configure
     exp_name = args.yaml
     config = load_yaml(args.yaml)
-
-    print("-" * 20 + " Options " + "-" * 20)
-    print(yaml.dump(config))
-    print("-" * 40)
 
     # Make result_dir
     res_dir = os.path.join(config["results_dir"], args.yaml)

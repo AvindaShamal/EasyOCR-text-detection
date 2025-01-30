@@ -101,7 +101,7 @@ class PseudoCharBoxBuilder:
             word_img_torch = word_img_torch.type(torch.FloatTensor).to(self.device)
 
             if self.device == "cuda":
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast(str(self.device)):
                     word_img_scores, _ = net(word_img_torch)
             else:
                 word_img_scores, _ = net(word_img_torch)

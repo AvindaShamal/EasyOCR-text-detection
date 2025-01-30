@@ -109,8 +109,6 @@ class GaussianBuilder(object):
         )
 
         bbox -= (bbox_left, bbox_top)
-        if np.all(bbox[:, 0] == 0) or np.all(bbox[:, 1] == 0):
-            print("bbox : ", bbox)
         warped_gaussian_map, width, height = self.four_point_transform(
             bbox.astype(np.float32)
         )
@@ -130,13 +128,8 @@ class GaussianBuilder(object):
                 bbox_left : bbox_left + width,
             ] = high_value_score
 
-        except Exception as e:
-            print("Error : {}".format(e))
-            print(
-                "On generating {} map, strange box came out. (width: {}, height: {})".format(
-                    map_type, width, height
-                )
-            )
+        except Exception:
+            pass
 
         return score_map
 

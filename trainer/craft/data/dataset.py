@@ -373,11 +373,14 @@ class CustomDataset(CraftBaseDataset):
         self.net = net.to(self.device)
 
     def update_device(self, gpu):
-        self.device = torch.device(
-            f"cuda:{gpu}" if torch.cuda.is_available() else "cpu"
-        )
-        if hasattr(self, "net"):
-            self.net.to(self.device)
+        if isinstance(gpu, torch.device):
+            gpu = gpu.index if gpu.type == "cuda" else -1                  
+        if torch.cuda.is_available() and isinstance(gpu, int) and gpu >= 0:
+            self.device = torch.device(f"cuda:{gpu}")
+        else:
+            self.device = torch.device("cpu")
+            if hasattr(self, "net"):
+                self.net.to(self.device)
 
     def load_img_gt_box(self, img_gt_box_path):
         lines = open(img_gt_box_path, encoding="utf-8").readlines()

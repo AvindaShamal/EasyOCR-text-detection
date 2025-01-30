@@ -16,7 +16,7 @@ train:
   real_dataset: custom
   ckpt_path: "./exp/CRAFT_clr_amp_29500.pth"
   eval_interval: 1000
-  batch_size: 1
+  batch_size: 16
   st_iter: 0
   end_iter: 224
   lr: 0.0001
@@ -88,7 +88,7 @@ train:
 test:
   trained_model : null
   custom_data:
-    test_set_size: 500
+    test_set_size: 472
     test_data_dir: "./data_root_dir/"
     text_threshold: 0.75
     low_text: 0.5
