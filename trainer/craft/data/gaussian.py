@@ -1,7 +1,11 @@
 import numpy as np
 import cv2
-
 from data.boxEnlarge import enlargebox
+import logging
+
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(filename="example.log", encoding="utf-8", level=logging.DEBUG)
 
 
 class GaussianBuilder(object):
@@ -23,13 +27,13 @@ class GaussianBuilder(object):
                     1
                     / 2
                     / np.pi
-                    / (self.sigma ** 2)
+                    / (self.sigma**2)
                     * np.exp(
                         -1
                         / 2
                         * (
-                            (i - self.init_size / 2) ** 2 / (self.sigma ** 2)
-                            + (j - self.init_size / 2) ** 2 / (self.sigma ** 2)
+                            (i - self.init_size / 2) ** 2 / (self.sigma**2)
+                            + (j - self.init_size / 2) ** 2 / (self.sigma**2)
                         )
                     )
                 )
@@ -42,7 +46,6 @@ class GaussianBuilder(object):
         return gaussian_map, gaussian_map_color
 
     def generate_circle_mask(self):
-
         zero_arr = np.zeros((self.init_size, self.init_size), np.float32)
         circle_mask = cv2.circle(
             img=zero_arr,
@@ -62,6 +65,7 @@ class GaussianBuilder(object):
             np.max(bbox[:, 0]).astype(np.int32),
             np.max(bbox[:, 1]).astype(np.int32),
         )
+
         init_points = np.array(
             [
                 [0, 0],
@@ -71,7 +75,6 @@ class GaussianBuilder(object):
             ],
             dtype="float32",
         )
-
         M = cv2.getPerspectiveTransform(init_points, bbox)
         warped_gaussian_map = cv2.warpPerspective(self.gaussian_map, M, (width, height))
         return warped_gaussian_map, width, height
@@ -98,22 +101,24 @@ class GaussianBuilder(object):
 
         map_h, map_w = score_map.shape
         bbox = enlargebox(bbox, map_h, map_w, enlarge_size, horizontal_text_bool)
-
         # If any one point of character bbox is out of range, don't put in on map
         if np.any(bbox < 0) or np.any(bbox[:, 0] > map_w) or np.any(bbox[:, 1] > map_h):
             return score_map
-
         bbox_left, bbox_top = np.array([np.min(bbox[:, 0]), np.min(bbox[:, 1])]).astype(
             np.int32
         )
+
         bbox -= (bbox_left, bbox_top)
+        if np.all(bbox[:, 0] == 0) or np.all(bbox[:, 1] == 0):
+            print("bbox : ", bbox)
         warped_gaussian_map, width, height = self.four_point_transform(
             bbox.astype(np.float32)
         )
 
         try:
             bbox_area_of_image = score_map[
-                bbox_top : bbox_top + height, bbox_left : bbox_left + width,
+                bbox_top : bbox_top + height,
+                bbox_left : bbox_left + width,
             ]
             high_value_score = np.where(
                 warped_gaussian_map > bbox_area_of_image,
@@ -121,7 +126,8 @@ class GaussianBuilder(object):
                 bbox_area_of_image,
             )
             score_map[
-                bbox_top : bbox_top + height, bbox_left : bbox_left + width,
+                bbox_top : bbox_top + height,
+                bbox_left : bbox_left + width,
             ] = high_value_score
 
         except Exception as e:
@@ -169,15 +175,18 @@ class GaussianBuilder(object):
     def generate_affinity(
         self, img_h, img_w, word_level_char_bbox, horizontal_text_bools
     ):
-
         affinity_map = np.zeros([img_h, img_w], dtype=np.float32)
         all_affinity_bbox = []
         for i in range(len(word_level_char_bbox)):
             for j in range(len(word_level_char_bbox[i]) - 1):
+                logger.debug("original_bboxes : {} {}".format(word_level_char_bbox[i][j], word_level_char_bbox[i][j + 1]))
                 affinity_bbox = self.calculate_affinity_box_points(
                     word_level_char_bbox[i][j], word_level_char_bbox[i][j + 1]
                 )
-
+                logger.debug("affinity_bbox : {}".format(affinity_bbox))
+                if int(affinity_bbox[0][0]) == int(affinity_bbox[1][0]) and int(
+                    affinity_bbox[0][0]) == int(affinity_bbox[2][0]):
+                    continue  ## Filter out invalid bbox: fix me
                 affinity_map = self.add_gaussian_map_to_score_map(
                     affinity_map,
                     affinity_bbox.copy(),

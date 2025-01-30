@@ -21,6 +21,7 @@ parts/
 sdist/
 var/
 wheels/
+data_root_dir/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -30,6 +31,9 @@ wheels/
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+
+# pretrained models
+*.pth
 
 # Installer logs
 pip-log.txt

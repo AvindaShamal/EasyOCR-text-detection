@@ -2,14 +2,14 @@ import os
 import re
 import itertools
 import random
-
+import torch
 import numpy as np
 import scipy.io as scio
 from PIL import Image
 import cv2
+import logging
 from torch.utils.data import Dataset
 import torchvision.transforms as transforms
-
 from data import imgproc
 from data.gaussian import GaussianBuilder
 from data.imgaug import (
@@ -24,6 +24,8 @@ from data.imgaug import (
 from data.pseudo_label.make_charbox import PseudoCharBoxBuilder
 from utils.util import saveInput, saveImage
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(filename="example.log", encoding="utf-8", level=logging.DEBUG)
 
 class CraftBaseDataset(Dataset):
     def __init__(
@@ -41,6 +43,7 @@ class CraftBaseDataset(Dataset):
         vis_test_dir,
         vis_opt,
         sample,
+        device="cuda",
     ):
         self.output_size = output_size
         self.data_dir = data_dir
@@ -53,6 +56,8 @@ class CraftBaseDataset(Dataset):
         self.vis_test_dir = vis_test_dir
         self.vis_opt = vis_opt
         self.sample = sample
+        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
+
         if self.sample != -1:
             random.seed(0)
             self.idx = random.sample(range(0, len(self.img_names)), self.sample)
@@ -73,18 +78,12 @@ class CraftBaseDataset(Dataset):
             augment_targets = random_rotate(
                 augment_targets, self.aug.random_rotate.max_angle
             )
-
         if self.aug.random_crop.option:
-            if self.aug.random_crop.version == "random_crop_with_bbox":
-                augment_targets = random_crop_with_bbox(
-                    augment_targets, word_level_char_bbox, self.output_size
-                )
-            elif self.aug.random_crop.version == "random_resize_crop_synth":
+            if self.aug.random_crop.version == "random_resize_crop_synth":
                 augment_targets = random_resize_crop_synth(
                     augment_targets, self.output_size
                 )
             elif self.aug.random_crop.version == "random_resize_crop":
-
                 if len(self.pre_crop_area) > 0:
                     pre_crop_area = self.pre_crop_area
                 else:
@@ -100,7 +99,10 @@ class CraftBaseDataset(Dataset):
                 )
 
             elif self.aug.random_crop.version == "random_crop":
-                augment_targets = random_crop(augment_targets, self.output_size,)
+                augment_targets = random_crop(
+                    augment_targets,
+                    self.output_size,
+                )
 
             else:
                 assert "Undefined RandomCrop version"
@@ -198,7 +200,12 @@ class CraftBaseDataset(Dataset):
         )
         image = image.transpose(2, 0, 1)
 
-        return image, region_score, affinity_score, confidence_mask
+        return (
+            torch.tensor(image, device=self.device, dtype=torch.float32),
+            torch.tensor(region_score, device=self.device, dtype=torch.float32),
+            torch.tensor(affinity_score, device=self.device, dtype=torch.float32),
+            torch.tensor(confidence_mask, device=self.device, dtype=torch.float32),
+        )
 
 
 class SynthTextDataSet(CraftBaseDataset):
@@ -237,7 +244,6 @@ class SynthTextDataSet(CraftBaseDataset):
         self.vis_index = list(range(1000))
 
     def load_data(self, bbox="char"):
-
         gt = scio.loadmat(os.path.join(self.data_dir, "gt.mat"))
         img_names = gt["imnames"][0]
         img_words = gt["txt"][0]
@@ -333,6 +339,7 @@ class CustomDataset(CraftBaseDataset):
         watershed_param,
         pseudo_vis_opt,
         do_not_care_label,
+        device="cuda",
     ):
         super().__init__(
             output_size,
@@ -348,6 +355,7 @@ class CustomDataset(CraftBaseDataset):
             vis_test_dir,
             vis_opt,
             sample,
+            device,
         )
         self.pseudo_vis_opt = pseudo_vis_opt
         self.do_not_care_label = do_not_care_label
@@ -355,17 +363,21 @@ class CustomDataset(CraftBaseDataset):
             watershed_param, vis_test_dir, pseudo_vis_opt, self.gaussian_builder
         )
         self.vis_index = list(range(1000))
-        self.img_dir = os.path.join(data_dir, "ch4_training_images")
+        self.img_dir = os.path.join(data_dir, "ch4_train_images")
         self.img_gt_box_dir = os.path.join(
-            data_dir, "ch4_training_localization_transcription_gt"
+            data_dir, "ch4_train_localization_transcription_gt"
         )
-        self.img_names = os.listdir(self.img_dir)
+        self.img_names = sorted(os.listdir(self.img_dir), key=self.natural_sort_key)
 
     def update_model(self, net):
-        self.net = net
+        self.net = net.to(self.device)
 
     def update_device(self, gpu):
-        self.gpu = gpu
+        self.device = torch.device(
+            f"cuda:{gpu}" if torch.cuda.is_available() else "cpu"
+        )
+        if hasattr(self, "net"):
+            self.net.to(self.device)
 
     def load_img_gt_box(self, img_gt_box_path):
         lines = open(img_gt_box_path, encoding="utf-8").readlines()
@@ -377,20 +389,25 @@ class CustomDataset(CraftBaseDataset):
             box_points = np.array(box_points, np.float32).reshape(4, 2)
             word = box_info[8:]
             word = ",".join(word)
-            if word in self.do_not_care_label:
-                words.append(self.do_not_care_label[0])
-                word_bboxes.append(box_points)
+            if (word in self.do_not_care_label) or (word == "") or (word is None):
                 continue
             word_bboxes.append(box_points)
             words.append(word)
         return np.array(word_bboxes), words
+
+    @staticmethod
+    def natural_sort_key(file_name):
+        return [
+            int(text) if text.isdigit() else text.lower()
+            for text in re.split(r"(\d+)", file_name)
+        ]
 
     def load_data(self, index):
         img_name = self.img_names[index]
         img_path = os.path.join(self.img_dir, img_name)
         image = cv2.imread(img_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
+        logger.debug(f"img_path : {img_path}")
         img_gt_box_path = os.path.join(
             self.img_gt_box_dir, "gt_%s.txt" % os.path.splitext(img_name)[0]
         )
@@ -422,7 +439,7 @@ class CustomDataset(CraftBaseDataset):
                 confidence,
                 horizontal_text_bool,
             ) = self.pseudo_charbox_builder.build_char_box(
-                self.net, self.gpu, image, word_bboxes[i], words[i], img_name=img_name
+                self.net, image, word_bboxes[i], words[i], img_name=img_name
             )
 
             cv2.fillPoly(confidence_mask, [np.int32(_word_bboxes[i])], confidence)

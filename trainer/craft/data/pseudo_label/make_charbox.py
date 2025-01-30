@@ -11,13 +11,23 @@ from data.pseudo_label.watershed import exec_watershed_by_version
 
 
 class PseudoCharBoxBuilder:
-    def __init__(self, watershed_param, vis_test_dir, pseudo_vis_opt, gaussian_builder):
+    def __init__(
+        self,
+        watershed_param,
+        vis_test_dir,
+        pseudo_vis_opt,
+        gaussian_builder,
+        device=None,
+    ):
         self.watershed_param = watershed_param
         self.vis_test_dir = vis_test_dir
         self.pseudo_vis_opt = pseudo_vis_opt
         self.gaussian_builder = gaussian_builder
         self.cnt = 0
         self.flag = False
+        self.device = (
+            device if device else ("cuda" if torch.cuda.is_available() else "cpu")
+        )
 
     def crop_image_by_bbox(self, image, box, word):
         w = max(
@@ -28,16 +38,14 @@ class PseudoCharBoxBuilder:
         )
         try:
             word_ratio = h / w
-        except:
+        except ZeroDivisionError:
             import ipdb
 
             ipdb.set_trace()
 
         one_char_ratio = min(h, w) / (max(h, w) / len(word))
 
-        # NOTE: criterion to split vertical word in here is set to work properly on IC15 dataset
         if word_ratio > 2 or (word_ratio > 1.6 and one_char_ratio > 2.4):
-            # warping method of vertical word (classified by upper condition)
             horizontal_text_bool = False
             long_side = h
             short_side = w
@@ -56,7 +64,6 @@ class PseudoCharBoxBuilder:
             )
             self.flag = True
         else:
-            # warping method of horizontal word
             horizontal_text_bool = True
             long_side = w
             short_side = h
@@ -78,7 +85,7 @@ class PseudoCharBoxBuilder:
         warped = cv2.warpPerspective(image, M, (long_side, short_side))
         return warped, M, horizontal_text_bool
 
-    def inference_word_box(self, net, gpu, word_image):
+    def inference_word_box(self, net, word_image):
         if net.training:
             net.eval()
 
@@ -91,13 +98,22 @@ class PseudoCharBoxBuilder:
                 )
             )
             word_img_torch = word_img_torch.permute(2, 0, 1).unsqueeze(0)
-            word_img_torch = word_img_torch.type(torch.FloatTensor).cuda(gpu)
-            with torch.cuda.amp.autocast():
+            word_img_torch = word_img_torch.type(torch.FloatTensor).to(self.device)
+
+            if self.device == "cuda":
+                with torch.cuda.amp.autocast():
+                    word_img_scores, _ = net(word_img_torch)
+            else:
                 word_img_scores, _ = net(word_img_torch)
         return word_img_scores
 
     def visualize_pseudo_label(
-        self, word_image, region_score, watershed_box, pseudo_char_bbox, img_name,
+        self,
+        word_image,
+        region_score,
+        watershed_box,
+        pseudo_char_bbox,
+        img_name,
     ):
         word_img_h, word_img_w, _ = word_image.shape
         word_img_cp1 = word_image.copy()
@@ -121,7 +137,6 @@ class PseudoCharBoxBuilder:
                 np.uint8(word_img_cp2), [np.reshape(box, (-1, 1, 2))], True, (255, 0, 0)
             )
 
-        # NOTE: Just for visualize, put gaussian map on char box
         pseudo_gt_region_score = self.gaussian_builder.generate_region(
             word_img_h, word_img_w, [_pseudo_char_bbox], [True]
         )
@@ -150,7 +165,7 @@ class PseudoCharBoxBuilder:
             os.path.join(
                 self.vis_test_dir,
                 "{}_{}".format(
-                    img_name, f"pseudo_char_bbox_{random.randint(0,100)}.jpg"
+                    img_name, f"pseudo_char_bbox_{random.randint(0, 100)}.jpg"
                 ),
             ),
             vis_result,
@@ -191,7 +206,6 @@ class PseudoCharBoxBuilder:
         return 2 * math.pi - theta if v1[1] < 0 else theta
 
     def clockwise_sort(self, points):
-        # returns 4x2 [[x1,y1],[x2,y2],[x3,y3],[x4,y4]] ndarray
         v1, v2, v3, v4 = points
         center = (v1 + v2 + v3 + v4) / 4
         theta = np.array(
@@ -205,7 +219,7 @@ class PseudoCharBoxBuilder:
         index = np.argsort(theta)
         return np.array([v1, v2, v3, v4])[index, :]
 
-    def build_char_box(self, net, gpu, image, word_bbox, word, img_name=""):
+    def build_char_box(self, net, image, word_bbox, word, img_name=""):
         word_image, M, horizontal_text_bool = self.crop_image_by_bbox(
             image, word_bbox, word
         )
@@ -217,7 +231,7 @@ class PseudoCharBoxBuilder:
         word_image = cv2.resize(word_image, None, fx=scale, fy=scale)
         word_img_h, word_img_w, _ = word_image.shape
 
-        scores = self.inference_word_box(net, gpu, word_image)
+        scores = self.inference_word_box(net, word_image)
         region_score = scores[0, :, :, 0].cpu().data.numpy()
         region_score = np.uint8(np.clip(region_score, 0, 1) * 255)
 
@@ -228,7 +242,6 @@ class PseudoCharBoxBuilder:
             self.watershed_param, region_score, word_image, self.pseudo_vis_opt
         )
 
-        # Used for visualize only
         watershed_box = pseudo_char_bbox.copy()
 
         pseudo_char_bbox = self.clip_into_boundary(
@@ -243,7 +256,11 @@ class PseudoCharBoxBuilder:
 
         if self.pseudo_vis_opt and self.flag:
             self.visualize_pseudo_label(
-                word_image, region_score, watershed_box, pseudo_char_bbox, img_name,
+                word_image,
+                region_score,
+                watershed_box,
+                pseudo_char_bbox,
+                img_name,
             )
 
         if len(pseudo_char_bbox) != 0:
@@ -259,5 +276,4 @@ class PseudoCharBoxBuilder:
             )
 
         pseudo_char_bbox = self.clip_into_boundary(pseudo_char_bbox, image.shape)
-
         return pseudo_char_bbox, confidence, horizontal_text_bool
