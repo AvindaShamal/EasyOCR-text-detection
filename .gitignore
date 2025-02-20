@@ -25,6 +25,7 @@ data_root_dir/
 *.egg-info/
 .installed.cfg
 *.egg
+*.ipynb
 
 custom_data_iou/
 # PyInstaller
