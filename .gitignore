@@ -40,6 +40,9 @@ custom_data_iou/
 pip-log.txt
 pip-delete-this-directory.txt
 
+# logs
+*.txt
+
 # Image files
 *.jpg
 *.jpeg
