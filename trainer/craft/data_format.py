@@ -23,10 +23,12 @@ def transcription_gt(gt_dir, img_name, annotations):
     with open(gt_path, "w", encoding="utf-8") as f:
         for idx in range(len(annotations["box"])):
             bbox = annotations["box"][idx]
-            box = []
-            for point in bbox:
-                (x, y) = point
-                box.append(f"{int(x)},{int(y)}")
+            box = [
+                f"{int(bbox[3][0])},{int(bbox[3][1])}",  # 4th point
+                f"{int(bbox[2][0])},{int(bbox[2][1])}",  # 3rd point
+                f"{int(bbox[1][0])},{int(bbox[1][1])}",  # 2nd point
+                f"{int(bbox[0][0])},{int(bbox[0][1])}",  # 1st point
+            ]
             text = annotations["text"][idx]
             f.write(",".join(box) + f",{text}\n")
 

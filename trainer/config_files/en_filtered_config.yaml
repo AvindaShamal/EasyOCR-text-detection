@@ -2,17 +2,17 @@ number: '0123456789'
 symbol: "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ €"
 lang_char: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 experiment_name: 'en_filtered'
-train_data: 'all_data'
-valid_data: 'all_data/en_val'
+train_data: 'cropped_data/train_images'
+valid_data: 'cropped_data/test_images'
 manualSeed: 1111
-workers: 6
-batch_size: 32 #32
-num_iter: 300000
-valInterval: 20000
+workers: 1
+batch_size: 32
+num_iter: 23000
+valInterval: 1525
 saved_model: '' #'saved_models/en_filtered/iter_300000.pth'
 FT: False
 optim: False # default is Adadelta
-lr: 1.
+lr: 0.1
 beta1: 0.9
 rho: 0.95
 eps: 0.00000001
@@ -21,7 +21,7 @@ grad_clip: 5
 select_data: 'en_train_filtered' # this is dataset folder in train_data
 batch_ratio: '1' 
 total_data_usage_ratio: 1.0
-batch_max_length: 34 
+batch_max_length: 50 
 imgH: 64
 imgW: 600
 rgb: False
@@ -32,7 +32,7 @@ contrast_adjust: 0.0
 data_filtering_off: False
 # Model Architecture
 Transformation: 'None'
-FeatureExtraction: 'VGG'
+FeatureExtraction: 'ResNet'
 SequenceModeling: 'BiLSTM'
 Prediction: 'CTC'
 num_fiducial: 20

@@ -2,14 +2,13 @@
 
 import argparse
 import os
-
 import cv2
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
 from tqdm import tqdm
 import wandb
-
+import pickle
 from config.load_config import load_yaml, DotDict
 from model.craft import CRAFT
 from metrics.eval_det_iou import DetectionIoUEvaluator
@@ -67,7 +66,7 @@ def save_result_synth(img_file, img, pre_output, pre_box, gt_box=None, result_di
 
 
 def save_result_2015(img_file, img, pre_output, pre_box, gt_box, result_dir):
-
+    # gt_box = ground truth box for one image
     img = np.array(img)
     img_copy = img.copy()
     region = pre_output[0]
@@ -89,20 +88,23 @@ def save_result_2015(img_file, img, pre_output, pre_box, gt_box, result_dir):
     if gt_box is not None:
         for j in range(len(gt_box)):
             _gt_box = np.array(gt_box[j]["points"]).reshape(-1, 2).astype(np.int32)
+            img1 = img.copy()
             if gt_box[j]["text"] == "###":
                 cv2.polylines(img, [_gt_box], True, color=(128, 128, 128), thickness=2)
-            else:
-                cv2.polylines(img, [_gt_box], True, color=(0, 0, 255), thickness=2)
+            # else:
+                # cv2.polylines(img, [_gt_box], True, color=(0, 0, 255), thickness=2)
+    
+    for box in pre_box:
+        box = np.array(box, np.int32).reshape(-1, 1, 2)
+        cv2.polylines(img, [box], True, color=(0, 255, 0), thickness=2)
 
     # draw overlay image
     overlay_img = overlay(img_copy, region, affinity, pre_box)
 
     # Save result image
-    res_img_path = result_dir + "/res_" + filename + ".jpg"
-    cv2.imwrite(res_img_path, img)
-
     overlay_image_path = result_dir + "/res_" + filename + "_box.jpg"
     cv2.imwrite(overlay_image_path, overlay_img)
+    cv2.imwrite(result_dir + "/res_" + filename + ".jpg", img1)
 
 
 def save_result_2013(img_file, img, pre_output, pre_box, gt_box=None, result_dir=""):
@@ -230,7 +232,7 @@ def main_eval(model_path, backbone, config, evaluator, result_dir, buffer, model
         os.makedirs(result_dir, exist_ok=True)
 
     total_imgs_bboxes_gt, total_imgs_path = load_test_dataset_iou("custom_data", config)
-
+    # all boundary boxes for test dataset and all image paths are loaded
     if mode == "weak_supervision" and torch.cuda.device_count() != 1:
         gpu_count = torch.cuda.device_count() // 2
     else:
@@ -337,7 +339,7 @@ def cal_eval(config, data, res_dir_name, opt, mode):
     res_dir = os.path.join(os.path.join("exp", args.yaml), "{}".format(res_dir_name))
 
     if opt == "iou_eval":
-        main_eval(
+        metrics = main_eval(
             config.test.trained_model,
             config.train.backbone,
             test_config,
@@ -368,7 +370,7 @@ if __name__ == "__main__":
     config = DotDict(config)
 
     if config["wandb_opt"]:
-        wandb.init(project="evaluation", entity="gmuffiness", name=args.yaml)
+        wandb.init(project="EasyOCR-text-detection", entity="avinda-shamal-fcode-labs", name=args.yaml)
         wandb.config.update(config)
 
     val_result_dir_name = args.yaml

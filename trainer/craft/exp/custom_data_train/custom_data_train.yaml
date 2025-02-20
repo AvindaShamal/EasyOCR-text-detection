@@ -1,4 +1,4 @@
-wandb_opt: False
+wandb_opt: True
 
 results_dir: "./exp/"
 vis_test_dir: "./vis_result/"
@@ -14,11 +14,11 @@ train:
   synth_data_dir: "/data/SynthText/"
   synth_ratio: 5
   real_dataset: custom
-  ckpt_path: "./exp/CRAFT_clr_amp_29500.pth"
-  eval_interval: 1000
-  batch_size: 16
+  ckpt_path: /home/avinda/Avinda/EasyOCR-text-detection/trainer/craft/exp/CRAFT_clr_amp_29500.pth
+  eval_interval: 25
+  batch_size: 12
   st_iter: 0
-  end_iter: 224
+  end_iter: 1060
   lr: 0.0001
   lr_decay: 7500
   gamma: 0.2
@@ -87,10 +87,10 @@ train:
 
 test:
   trained_model : null
-  custom_data:
+  custom_data :
     test_set_size: 472
     test_data_dir: "./data_root_dir/"
-    text_threshold: 0.75
+    text_threshold: 0.2
     low_text: 0.5
     link_threshold: 0.2
     canvas_size: 2240

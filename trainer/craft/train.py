@@ -6,9 +6,8 @@ import time
 import numpy as np
 import torch
 import torch.optim as optim
-import wandb
 from tqdm import tqdm
-import matplotlib.pyplot as plt
+import wandb
 from config.load_config import load_yaml, DotDict
 from data.dataset import SynthTextDataSet, CustomDataset
 from loss.mseloss import Maploss_v2, Maploss_v3
@@ -20,16 +19,10 @@ from utils.util import copyStateDict
 
 class Trainer(object):
     def __init__(self, config, gpu, mode):
-        if torch.cuda.is_available():
-            self.device = torch.device(f"cuda:{gpu}")
-            self.gpu = gpu
-        else:
-            self.device = torch.device("cpu")
-            self.gpu = None
-
         self.config = config
+        self.gpu = gpu
         self.mode = mode
-        self.net_param = self.get_load_param(self.device)
+        self.net_param = self.get_load_param(gpu)
 
     def get_synth_loader(self):
         dataset = SynthTextDataSet(
@@ -80,9 +73,9 @@ class Trainer(object):
 
         return custom_dataset
 
-    def get_load_param(self, device):
+    def get_load_param(self, gpu):
         if self.config.train.ckpt_path is not None:
-            map_location = device
+            map_location = "cuda:%d" % gpu
             param = torch.load(self.config.train.ckpt_path, map_location=map_location)
         else:
             param = None
@@ -134,59 +127,8 @@ class Trainer(object):
                 }
             )
 
-    def iou_train(
-        self, pred_scores: torch.Tensor, gt_scores: torch.Tensor, threshold=0.5
-    ):
-        """
-        Compute Intersection over Union (IoU) for text detection.
-        Args:
-            pred_scores: Model-predicted region or affinity scores.
-            gt_scores: Ground truth region or affinity scores.
-        """
-        intersection = (
-            torch.logical_and(pred_scores > threshold, gt_scores > threshold)
-            .sum()
-            .item()
-        )
-        union = (
-            torch.logical_or(pred_scores > threshold, gt_scores > threshold)
-            .sum()
-            .item()
-        )
-
-        if union == 0:
-            return (
-                1.0 if intersection == 0 else 0.0
-            )  # Handle edge case where no text is present
-
-        return intersection / union
-
-    def plot_learning_curves(self, train_loss, train_iou):
-        # Plot Loss Curve
-        plt.figure(figsize=(10,5))
-        plt.plot(train_loss, label="Training Loss", color='red')
-        plt.xlabel("Steps (x Batch Size)")
-        plt.ylabel("Loss")
-        plt.title("Training Loss Curve")
-        plt.legend()
-        plt.savefig("train_loss_curve.png")
-        plt.close()
-
-        # Plot IoU Curve
-        plt.figure(figsize=(10,5))
-        plt.plot(train_iou, label="Training IoU", color='blue')
-        plt.xlabel("Steps (x Batch Size)")
-        plt.ylabel("IoU Score")
-        plt.title("Training IoU Curve")
-        plt.legend()
-        plt.savefig("train_iou_curve.png")
-        plt.close()
-
     def train(self, buffer_dict):
-        # Check if CUDA is available, else use CPU
-        device = torch.device(
-            f"cuda:{self.gpu}" if torch.cuda.is_available() else "cpu"
-        )
+        torch.cuda.set_device(self.gpu)
 
         # MODEL -------------------------------------------------------------------------------------------------------#
         # SUPERVISION model
@@ -196,32 +138,30 @@ class Trainer(object):
             else:
                 raise Exception("Undefined architecture")
 
+            supervision_device = self.gpu
             if self.config.train.ckpt_path is not None:
-                supervision_param = self.get_load_param(device)
+                supervision_param = self.get_load_param(supervision_device)
                 supervision_model.load_state_dict(
                     copyStateDict(supervision_param["craft"])
                 )
-
-            supervision_model = supervision_model.to(device)
-            print(f"Supervision model loading on: {device}")
+                supervision_model = supervision_model.to(f"cuda:{supervision_device}")
+            print(f"Supervision model loading on : gpu {supervision_device}")
         else:
-            supervision_model = None
+            supervision_model, supervision_device = None, None
 
         # TRAIN model
         if self.config.train.backbone == "vgg":
-            craft = CRAFT(pretrained=True, amp=self.config.train.amp)
+            craft = CRAFT(pretrained=False, amp=self.config.train.amp)
         else:
             raise Exception("Undefined architecture")
 
         if self.config.train.ckpt_path is not None:
             craft.load_state_dict(copyStateDict(self.net_param["craft"]))
 
-        craft = craft.to(device)
+        craft = craft.cuda()
         craft = torch.nn.DataParallel(craft)
 
-        # Disable cudnn.benchmark if using CPU
-        if torch.cuda.is_available():
-            torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.benchmark = True
 
         # DATASET -----------------------------------------------------------------------------------------------------#
 
@@ -236,7 +176,7 @@ class Trainer(object):
 
         if self.config.mode == "weak_supervision":
             trn_real_dataset.update_model(supervision_model)
-            trn_real_dataset.update_device(device)
+            trn_real_dataset.update_device(supervision_device)
 
         trn_real_loader = torch.utils.data.DataLoader(
             trn_real_dataset,
@@ -244,6 +184,7 @@ class Trainer(object):
             shuffle=False,
             num_workers=self.config.train.num_workers,
             drop_last=False,
+            pin_memory=not torch.cuda.is_available(),
         )
 
         # OPTIMIZER ---------------------------------------------------------------------------------------------------#
@@ -259,9 +200,9 @@ class Trainer(object):
             self.config.train.lr = self.net_param["optimizer"]["param_groups"][0]["lr"]
 
         # LOSS --------------------------------------------------------------------------------------------------------#
-        # Mixed precision
-        if self.config.train.amp and torch.cuda.is_available():
-            scaler = torch.amp.GradScaler(str(self.device))
+        # mixed precision
+        if self.config.train.amp:
+            scaler = torch.amp.GradScaler("cuda")
 
             if (
                 self.config.train.ckpt_path is not None
@@ -281,21 +222,21 @@ class Trainer(object):
         loss_value = 0
         batch_time = 0
         start_time = time.time()
-        iou_scores = []
-        train_loss = []
-        train_iou = []
         batch_size = self.config.train.batch_size
 
         print(
             "================================ Train start ================================"
         )
         while train_step < whole_training_step:
-            for index, (
-                images,
-                region_scores,
-                affinity_scores,
-                confidence_masks,
-            ) in tqdm(enumerate(trn_real_loader), total=len(trn_real_loader)):
+            for (
+                index,
+                (
+                    images,
+                    region_scores,
+                    affinity_scores,
+                    confidence_masks,
+                ),
+            ) in enumerate(tqdm(trn_real_loader)):
                 craft.train()
                 if train_step > 0 and train_step % self.config.train.lr_decay == 0:
                     update_lr_rate_step += 1
@@ -306,36 +247,22 @@ class Trainer(object):
                         self.config.train.lr,
                     )
 
-                images = images.to(device, non_blocking=torch.cuda.is_available())
-                region_scores = region_scores.to(
-                    device, non_blocking=torch.cuda.is_available()
-                )
-                affinity_scores = affinity_scores.to(
-                    device, non_blocking=torch.cuda.is_available()
-                )
-                confidence_masks = confidence_masks.to(
-                    device, non_blocking=torch.cuda.is_available()
-                )
+                images = images.cuda(non_blocking=True)
+                region_scores = region_scores.cuda(non_blocking=True)
+                affinity_scores = affinity_scores.cuda(non_blocking=True)
+                confidence_masks = confidence_masks.cuda(non_blocking=True)
 
                 if self.config.train.use_synthtext:
                     # Synth image load
                     syn_image, syn_region_label, syn_affi_label, syn_confidence_mask = (
                         next(batch_syn)
                     )
-                    syn_image = syn_image.to(
-                        device, non_blocking=torch.cuda.is_available()
-                    )
-                    syn_region_label = syn_region_label.to(
-                        device, non_blocking=torch.cuda.is_available()
-                    )
-                    syn_affi_label = syn_affi_label.to(
-                        device, non_blocking=torch.cuda.is_available()
-                    )
-                    syn_confidence_mask = syn_confidence_mask.to(
-                        device, non_blocking=torch.cuda.is_available()
-                    )
+                    syn_image = syn_image.cuda(non_blocking=True)
+                    syn_region_label = syn_region_label.cuda(non_blocking=True)
+                    syn_affi_label = syn_affi_label.cuda(non_blocking=True)
+                    syn_confidence_mask = syn_confidence_mask.cuda(non_blocking=True)
 
-                    # Concat syn & custom image
+                    # concat syn & custom image
                     images = torch.cat((syn_image, images), 0)
                     region_image_label = torch.cat((syn_region_label, region_scores), 0)
                     affinity_image_label = torch.cat(
@@ -349,8 +276,8 @@ class Trainer(object):
                     affinity_image_label = affinity_scores
                     confidence_mask_label = confidence_masks
 
-                if self.config.train.amp and torch.cuda.is_available():
-                    with torch.amp.autocast(str(self.device)):
+                if self.config.train.amp:
+                    with torch.amp.autocast("cuda"):
                         output, _ = craft(images)
                         out1 = output[:, :, :, 0]
                         out2 = output[:, :, :, 1]
@@ -381,16 +308,12 @@ class Trainer(object):
                         out2,
                         confidence_mask_label,
                         self.config.train.neg_rto,
-                        self.config.train.n_min_neg,
                     )
 
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
 
-                iou_region = self.iou_train(out1, region_image_label)
-                iou_affinity = self.iou_train(out2, affinity_image_label)
-                iou_scores.append((iou_region + iou_affinity) / 2)
                 end_time = time.time()
                 loss_value += loss.item()
                 batch_time += end_time - start_time
@@ -400,14 +323,10 @@ class Trainer(object):
                     loss_value = 0
                     avg_batch_time = batch_time / batch_size
                     batch_time = 0
-                    mean_iou = sum(iou_scores) / len(iou_scores)
-                    iou_scores = []
-                    train_loss.append(mean_loss)
-                    train_iou.append(mean_iou)
 
                     print(
-                        "{}, training_step: {}|{}, learning rate: {:.5f}, "
-                        "training_loss: {:.5f}, mean_iou: {:.4f}, avg_batch_time: {:.4f}".format(
+                        "{}, training_step: {}|{}, learning rate: {:.8f}, "
+                        "training_loss: {:.5f}, avg_batch_time: {:.5f}".format(
                             time.strftime(
                                 "%Y-%m-%d:%H:%M:%S", time.localtime(time.time())
                             ),
@@ -415,7 +334,6 @@ class Trainer(object):
                             whole_training_step,
                             training_lr,
                             mean_loss,
-                            mean_iou,
                             avg_batch_time,
                         )
                     )
@@ -473,7 +391,6 @@ class Trainer(object):
         print(
             "================================ Train end ================================"
         )
-        self.plot_learning_curves(train_loss, train_iou)
         # save last model
         save_param_dic = {
             "iter": train_step,
@@ -529,7 +446,11 @@ def main():
 
     # Apply config to wandb
     if config["wandb_opt"]:
-        wandb.init(project="EasyOCR-text-detection", entity="avinda-shamal-fcode-labs", name=exp_name)
+        wandb.init(
+            project="EasyOCR-text-detection",
+            entity="avinda-shamal-fcode-labs",
+            name=exp_name,
+        )
         wandb.config.update(config)
 
     config = DotDict(config)

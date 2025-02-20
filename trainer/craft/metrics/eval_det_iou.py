@@ -12,7 +12,7 @@ https://github.com/MhLiao/DB/blob/3c32b808d4412680310d3d28eeb6a2d5bf1566c5/conce
 
 
 class DetectionIoUEvaluator(object):
-    def __init__(self, iou_constraint=0.5, area_precision_constraint=0.5):
+    def __init__(self, iou_constraint=0.1, area_precision_constraint=0.5):
         self.iou_constraint = iou_constraint
         self.area_precision_constraint = area_precision_constraint
 
@@ -55,9 +55,6 @@ class DetectionIoUEvaluator(object):
         numGlobalCareGt = 0
         numGlobalCareDet = 0
 
-        arrGlobalConfidences = []
-        arrGlobalMatches = []
-
         recall = 0
         precision = 0
         hmean = 0
@@ -80,9 +77,6 @@ class DetectionIoUEvaluator(object):
         pairs = []
         detMatchedNums = []
 
-        arrSampleConfidences = []
-        arrSampleMatch = []
-
         evaluationLog = ""
 
         # print(len(gt))
@@ -97,7 +91,7 @@ class DetectionIoUEvaluator(object):
                 if not Polygon(points).is_valid or not Polygon(points).is_simple:
                     continue
             except:
-                import ipdb;
+                import ipdb
                 ipdb.set_trace()
 
             #import ipdb;ipdb.set_trace()

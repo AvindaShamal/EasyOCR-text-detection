@@ -410,7 +410,6 @@ class CustomDataset(CraftBaseDataset):
         img_path = os.path.join(self.img_dir, img_name)
         image = cv2.imread(img_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        logger.debug(f"img_path : {img_path}")
         img_gt_box_path = os.path.join(
             self.img_gt_box_dir, "gt_%s.txt" % os.path.splitext(img_name)[0]
         )
