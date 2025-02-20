@@ -3,7 +3,6 @@ import argparse
 import os
 import shutil
 import time
-import yaml
 import numpy as np
 import torch
 import torch.optim as optim
@@ -163,22 +162,25 @@ class Trainer(object):
         return intersection / union
 
     def plot_learning_curves(self, train_loss, train_iou):
-        fig, ax1 = plt.subplots()
+        # Plot Loss Curve
+        plt.figure(figsize=(10,5))
+        plt.plot(train_loss, label="Training Loss", color='red')
+        plt.xlabel("Steps (x Batch Size)")
+        plt.ylabel("Loss")
+        plt.title("Training Loss Curve")
+        plt.legend()
+        plt.savefig("train_loss_curve.png")
+        plt.close()
 
-        color = "tab:red"
-        ax1.set_xlabel("Training Steps")
-        ax1.set_ylabel("Loss", color=color)
-        ax1.plot(train_loss, color=color)
-        ax1.tick_params(axis="y", labelcolor=color)
-
-        ax2 = ax1.twinx()
-        color = "tab:blue"
-        ax2.set_ylabel("IoU", color=color)
-        ax2.plot(train_iou, color=color)
-        ax2.tick_params(axis="y", labelcolor=color)
-
-        fig.tight_layout()
-        plt.show()
+        # Plot IoU Curve
+        plt.figure(figsize=(10,5))
+        plt.plot(train_iou, label="Training IoU", color='blue')
+        plt.xlabel("Steps (x Batch Size)")
+        plt.ylabel("IoU Score")
+        plt.title("Training IoU Curve")
+        plt.legend()
+        plt.savefig("train_iou_curve.png")
+        plt.close()
 
     def train(self, buffer_dict):
         # Check if CUDA is available, else use CPU
@@ -288,7 +290,6 @@ class Trainer(object):
             "================================ Train start ================================"
         )
         while train_step < whole_training_step:
-            print("Epoch: {}/{}".format(train_step, whole_training_step))
             for index, (
                 images,
                 region_scores,
@@ -405,8 +406,8 @@ class Trainer(object):
                     train_iou.append(mean_iou)
 
                     print(
-                        "{}, training_step: {}|{}, learning rate: {:.6f}, "
-                        "training_loss: {:.5f}, mean_iou: {:.4f}, avg_batch_time: {:.5f}".format(
+                        "{}, training_step: {}|{}, learning rate: {:.5f}, "
+                        "training_loss: {:.5f}, mean_iou: {:.4f}, avg_batch_time: {:.4f}".format(
                             time.strftime(
                                 "%Y-%m-%d:%H:%M:%S", time.localtime(time.time())
                             ),
@@ -528,7 +529,7 @@ def main():
 
     # Apply config to wandb
     if config["wandb_opt"]:
-        wandb.init(project="craft-stage2", entity="user_name", name=exp_name)
+        wandb.init(project="EasyOCR-text-detection", entity="avinda-shamal-fcode-labs", name=exp_name)
         wandb.config.update(config)
 
     config = DotDict(config)

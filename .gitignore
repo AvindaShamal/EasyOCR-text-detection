@@ -26,6 +26,7 @@ data_root_dir/
 .installed.cfg
 *.egg
 
+custom_data_iou/
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
@@ -38,6 +39,11 @@ data_root_dir/
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
+
+# Image files
+*.jpg
+*.jpeg
+*.png
 
 # Unit test / coverage reports
 htmlcov/
